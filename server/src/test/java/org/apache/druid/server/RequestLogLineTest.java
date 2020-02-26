@@ -81,7 +81,7 @@ public class RequestLogLineTest
     requestLogLine.getNativeQueryLine(new ObjectMapper()); // call should not throw exception
 
     requestLogLine = RequestLogLine.forSql(
-        "", null, DateTimes.nowUtc(), null, new QueryStats(ImmutableMap.of())
+        "", null, null, DateTimes.nowUtc(), null, new QueryStats(ImmutableMap.of())
     );
     Assert.assertEquals("", requestLogLine.getRemoteAddr());
     Assert.assertEquals(ImmutableMap.<String, Object>of(), requestLogLine.getSqlQueryContext());

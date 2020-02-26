@@ -350,6 +350,7 @@ public class SqlLifecycle
             RequestLogLine.forSql(
                 sql,
                 queryContext,
+                null,
                 DateTimes.utc(startMs),
                 remoteAddress,
                 new QueryStats(statsMap)

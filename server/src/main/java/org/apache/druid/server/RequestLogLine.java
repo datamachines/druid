@@ -25,12 +25,18 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.base.Joiner;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableMap;
+import net.sf.jsqlparser.JSQLParserException;
+import net.sf.jsqlparser.parser.CCJSqlParserDefaultVisitor;
+import net.sf.jsqlparser.parser.CCJSqlParserTreeConstants;
+import net.sf.jsqlparser.parser.CCJSqlParserUtil;
+import net.sf.jsqlparser.parser.SimpleNode;
 import org.apache.druid.java.util.common.StringUtils;
 import org.apache.druid.query.Query;
 import org.joda.time.DateTime;
 
 import javax.annotation.Nullable;
 import java.util.Arrays;
+import java.util.HashSet;
 import java.util.Map;
 import java.util.Objects;
 
@@ -41,6 +47,7 @@ public class RequestLogLine
   private final Query query;
   private final String sql;
   private final Map<String, Object> sqlQueryContext;
+  private final HashSet<String> sqlColumns;
   private final DateTime timestamp;
   private final String remoteAddr;
   private final QueryStats queryStats;
@@ -49,6 +56,7 @@ public class RequestLogLine
       @Nullable Query query,
       @Nullable String sql,
       @Nullable Map<String, Object> sqlQueryContext,
+      @Nullable HashSet<String> sqlColumns,
       DateTime timestamp,
       @Nullable String remoteAddr,
       QueryStats queryStats
@@ -57,6 +65,7 @@ public class RequestLogLine
     this.query = query;
     this.sql = sql;
     this.sqlQueryContext = sqlQueryContext != null ? sqlQueryContext : ImmutableMap.of();
+    this.sqlColumns = (sqlColumns != null) ? sqlColumns : getColumns();
     this.timestamp = Preconditions.checkNotNull(timestamp, "timestamp");
     this.remoteAddr = StringUtils.nullToEmptyNonDruidDataString(remoteAddr);
     this.queryStats = Preconditions.checkNotNull(queryStats, "queryStats");
@@ -64,18 +73,19 @@ public class RequestLogLine
 
   public static RequestLogLine forNative(Query query, DateTime timestamp, String remoteAddr, QueryStats queryStats)
   {
-    return new RequestLogLine(query, null, null, timestamp, remoteAddr, queryStats);
+    return new RequestLogLine(query, null, null, null, timestamp, remoteAddr, queryStats);
   }
 
   public static RequestLogLine forSql(
       String sql,
       Map<String, Object> sqlQueryContext,
+      HashSet<String> sqlColumns,
       DateTime timestamp,
       String remoteAddr,
       QueryStats queryStats
   )
   {
-    return new RequestLogLine(null, sql, sqlQueryContext, timestamp, remoteAddr, queryStats);
+    return new RequestLogLine(null, sql, sqlQueryContext, sqlColumns, timestamp, remoteAddr, queryStats);
   }
 
   public String getNativeQueryLine(ObjectMapper objectMapper) throws JsonProcessingException
@@ -98,7 +108,8 @@ public class RequestLogLine
             remoteAddr,
             "",
             objectMapper.writeValueAsString(queryStats),
-            objectMapper.writeValueAsString(ImmutableMap.of("query", sql, "context", sqlQueryContext))
+            objectMapper.writeValueAsString(ImmutableMap.of("query", sql, "context", sqlQueryContext)),
+            objectMapper.writeValueAsString(sqlColumns)
         )
     );
   }
@@ -143,6 +154,36 @@ public class RequestLogLine
     return queryStats;
   }
 
+  @JsonProperty("sqlColumns")
+  public HashSet<String> getColumns()
+  {
+    HashSet<String> columns = new HashSet<>();
+
+    try {
+      if (getSql() != null) {
+        SimpleNode node = (SimpleNode) CCJSqlParserUtil.parseAST(getSql());
+        node.jjtAccept(new CCJSqlParserDefaultVisitor() {
+          @Override
+          public Object visit(SimpleNode node, Object data)
+          {
+            if (node.getId() == CCJSqlParserTreeConstants.JJTCOLUMN) {
+              if (node.jjtGetValue().toString() != null) {
+                columns.add(node.jjtGetValue().toString());
+              }
+
+              return super.visit(node, data);
+            } else {
+              return super.visit(node, data);
+            }
+          }
+        }, null);
+      }
+    }
+    catch (JSQLParserException ignored) {
+    }
+    return columns;
+  }
+
   @Override
   public boolean equals(Object o)
   {
@@ -156,6 +197,7 @@ public class RequestLogLine
     return Objects.equals(query, that.query) &&
            Objects.equals(sql, that.sql) &&
            Objects.equals(sqlQueryContext, that.sqlQueryContext) &&
+           Objects.equals(sqlColumns, that.sqlColumns) &&
            Objects.equals(timestamp, that.timestamp) &&
            Objects.equals(remoteAddr, that.remoteAddr) &&
            Objects.equals(queryStats, that.queryStats);
@@ -164,7 +206,7 @@ public class RequestLogLine
   @Override
   public int hashCode()
   {
-    return Objects.hash(query, sql, sqlQueryContext, timestamp, remoteAddr, queryStats);
+    return Objects.hash(query, sql, sqlQueryContext, sqlColumns, timestamp, remoteAddr, queryStats);
   }
 
   @Override
@@ -174,6 +216,7 @@ public class RequestLogLine
            "query=" + query +
            ", sql='" + sql + '\'' +
            ", sqlQueryContext=" + sqlQueryContext +
+           ", sqlColumns=" + sqlColumns +
            ", timestamp=" + timestamp +
            ", remoteAddr='" + remoteAddr + '\'' +
            ", queryStats=" + queryStats +
